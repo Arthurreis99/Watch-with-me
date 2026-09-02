@@ -4,7 +4,6 @@ Site responsivo para criar salas e assistir a vídeos do YouTube em sincronia no
 
 ## Acessar
 
-- GitHub Pages: https://arthurreis99.github.io/Watch-with-me-/
 - Aplicação completa: https://watch-with-me.ocatolico.chatgpt.site
 
 ## O que já funciona
@@ -51,7 +50,7 @@ Para gerar a versão estática do GitHub Pages usando a API publicada:
 VITE_WATCH_API_BASE=https://watch-with-me.ocatolico.chatgpt.site npm run build:pages
 ```
 
-O resultado é gravado em `pages-dist/`. Cada envio para a branch `main` executa a publicação automaticamente pelo GitHub Actions.
+O resultado é gravado em `pages-dist/`. Cada envio para a branch `main` executa automaticamente lint, checagem de tipos, testes e as duas builds do projeto.
 
 ## Estrutura principal
 
@@ -59,7 +58,7 @@ O resultado é gravado em `pages-dist/`. Cada envio para a branch `main` executa
 - `app/api/rooms/`: criação, entrada e sincronização das salas.
 - `db/schema.ts`: tabelas de salas e participantes.
 - `pages/`: entrada estática usada pelo GitHub Pages.
-- `.github/workflows/deploy-pages.yml`: publicação automática.
+- `.github/workflows/deploy-pages.yml`: validação automática do projeto.
 
 ## Limitações atuais
 
