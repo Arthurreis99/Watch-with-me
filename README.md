@@ -2,10 +2,6 @@
 
 Site responsivo para criar salas e assistir a vídeos do YouTube em sincronia no Android, iPhone ou computador.
 
-## Acessar
-
-- Aplicação completa: https://watch-with-me.ocatolico.chatgpt.site
-
 ## O que já funciona
 
 - nome de usuário salvo apenas no aparelho;
@@ -27,7 +23,7 @@ Site responsivo para criar salas e assistir a vídeos do YouTube em sincronia no
 - **Interface:** React, TypeScript, Vinext/Vite e Tailwind CSS.
 - **Player:** YouTube IFrame Player API.
 - **GitHub Pages:** hospeda a versão estática acessada pelos usuários.
-- **API:** Cloudflare Worker compatível com Sites.
+- **API:** Cloudflare Worker.
 - **Banco:** D1/SQLite para salas, participantes e estado de reprodução.
 - **Sincronização:** consultas leves ao estado da sala e correção local do player.
 
@@ -44,10 +40,10 @@ npx tsc --noEmit
 npm run build
 ```
 
-Para gerar a versão estática do GitHub Pages usando a API publicada:
+Para gerar a versão estática do GitHub Pages, informe o endereço da API da sua implantação:
 
 ```bash
-VITE_WATCH_API_BASE=https://watch-with-me.ocatolico.chatgpt.site npm run build:pages
+VITE_WATCH_API_BASE=https://api.seu-dominio.com npm run build:pages
 ```
 
 O resultado é gravado em `pages-dist/`. Cada envio para a branch `main` executa automaticamente lint, checagem de tipos, testes e as duas builds do projeto.

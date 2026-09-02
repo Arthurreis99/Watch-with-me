@@ -39,5 +39,3 @@ jobs:
 
       - name: Build static client
         run: npm run build:pages
-        env:
-          VITE_WATCH_API_BASE: https://watch-with-me.ocatolico.chatgpt.site

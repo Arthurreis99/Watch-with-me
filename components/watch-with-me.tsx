@@ -64,6 +64,14 @@ type YTNamespace = {
   PlayerState: { PLAYING: number; PAUSED: number; BUFFERING: number };
 };
 
+const YOUTUBE_STATE = {
+  UNSTARTED: -1,
+  PLAYING: 1,
+  PAUSED: 2,
+  BUFFERING: 3,
+  CUED: 5,
+} as const;
+
 declare global {
   interface Window {
     YT?: YTNamespace;
@@ -239,6 +247,7 @@ function WatchRoom({
   const playerHostRef = useRef<HTMLDivElement>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
+  const playerUnlockedRef = useRef(false);
   const snapshotRef = useRef(snapshot);
   const suppressEventsUntilRef = useRef(0);
   const lastSampleRef = useRef({ media: 0, wall: 0, state: -1 });
@@ -294,13 +303,18 @@ function WatchRoom({
               target.cueVideoById(current.room.videoId);
               const elapsed = Math.max(0, Date.now() - snapshotReceivedAtRef.current);
               target.seekTo(targetPosition(current.room, current.serverTime + elapsed), true);
-              if (current.room.playing) target.playVideo();
+              if (current.room.playing && playerUnlockedRef.current) target.playVideo();
             }
           },
           onStateChange: ({ data, target }) => {
-            if (Date.now() < suppressEventsUntilRef.current) return;
             const current = snapshotRef.current;
             if (!current.room.videoId) return;
+            if (data === YT.PlayerState.PLAYING) {
+              playerUnlockedRef.current = true;
+              setPlayerUnlocked(true);
+            }
+            if (Date.now() < suppressEventsUntilRef.current) return;
+            if (target.getVideoData().video_id !== current.room.videoId) return;
             if (data === YT.PlayerState.PLAYING || data === YT.PlayerState.PAUSED) {
               void publishStateRef.current({
                 videoId: current.room.videoId,
@@ -309,7 +323,10 @@ function WatchRoom({
               });
             }
           },
-          onAutoplayBlocked: () => setPlayerUnlocked(false),
+          onAutoplayBlocked: () => {
+            playerUnlockedRef.current = false;
+            setPlayerUnlocked(false);
+          },
         },
       });
     });
@@ -331,7 +348,7 @@ function WatchRoom({
     if (loadedVideo !== room.videoId) player.cueVideoById(room.videoId);
     const target = targetPosition(room, serverTime);
     if (Math.abs(player.getCurrentTime() - target) > 0.9) player.seekTo(target, true);
-    if (room.playing) player.playVideo();
+    if (room.playing && playerUnlockedRef.current) player.playVideo();
     else player.pauseVideo();
   }, [snapshot.room.version, playerReady]);
 
@@ -366,7 +383,20 @@ function WatchRoom({
       const media = player.getCurrentTime();
       const wall = Date.now();
       const state = player.getPlayerState();
+      const loadedVideoId = player.getVideoData().video_id;
       const previous = lastSampleRef.current;
+
+      if (
+        !playerUnlockedRef.current ||
+        loadedVideoId !== current.room.videoId ||
+        state === YOUTUBE_STATE.UNSTARTED ||
+        state === YOUTUBE_STATE.BUFFERING ||
+        state === YOUTUBE_STATE.CUED
+      ) {
+        lastSampleRef.current = { media, wall, state };
+        return;
+      }
+
       const expectedLocal = previous.media + (previous.state === 1 ? (wall - previous.wall) / 1000 : 0);
 
       if (previous.state !== -1 && Math.abs(media - expectedLocal) > 2.2) {
@@ -375,7 +405,7 @@ function WatchRoom({
           playing: state === 1,
           position: media,
         });
-      } else if (state !== 3) {
+      } else if (state === YOUTUBE_STATE.PLAYING || state === YOUTUBE_STATE.PAUSED) {
         const elapsed = snapshotReceivedAtRef.current
           ? Math.max(0, wall - snapshotReceivedAtRef.current)
           : 0;
@@ -409,11 +439,23 @@ function WatchRoom({
 
   const unlockPlayer = () => {
     const player = playerRef.current;
-    if (!player) return;
+    const current = snapshotRef.current;
+    const videoId = current.room.videoId;
+    if (!player || !videoId) return;
+
+    playerUnlockedRef.current = true;
+    setPlayerUnlocked(true);
+    suppressEventsUntilRef.current = Date.now() + 1_500;
+    const elapsed = Math.max(0, Date.now() - snapshotReceivedAtRef.current);
+    const position = targetPosition(current.room, current.serverTime + elapsed);
+    if (Math.abs(player.getCurrentTime() - position) > 0.9) {
+      player.seekTo(position, true);
+    }
     player.unMute();
     player.playVideo();
-    if (!snapshot.room.playing) player.pauseVideo();
-    setPlayerUnlocked(true);
+    if (!current.room.playing) {
+      void publishStateRef.current({ videoId, playing: true, position });
+    }
   };
 
   const copyCode = async () => {
@@ -484,8 +526,8 @@ function WatchRoom({
             {snapshot.room.videoId && !playerUnlocked && (
               <button type="button" className="unlock-player" onClick={unlockPlayer}>
                 <span><Play /></span>
-                <strong>Ativar reprodução</strong>
-                <small>Necessário uma vez em cada aparelho</small>
+                <strong>Iniciar vídeo</strong>
+                <small>Toque uma vez em cada aparelho</small>
               </button>
             )}
           </div>
