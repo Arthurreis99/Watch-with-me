@@ -8,6 +8,9 @@ const directory = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   root: directory,
   base: "/Watch-with-me-/",
+  define: {
+    "import.meta.env.VITE_P2P_ROOMS": JSON.stringify("true"),
+  },
   publicDir: path.resolve(directory, "../public"),
   resolve: {
     alias: {

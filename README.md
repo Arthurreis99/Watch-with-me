@@ -12,6 +12,7 @@ Site responsivo para criar salas e assistir a vídeos do YouTube em sincronia no
 - link de convite que já preenche o código da sala;
 - adição de vídeo por link do YouTube;
 - sincronização de reprodução, pausa e mudança de posição;
+- conexão direta entre os aparelhos na versão do GitHub Pages;
 - correção automática de diferenças de tempo entre os aparelhos;
 - botão de ativação do player para cumprir as restrições de reprodução do iPhone;
 - salas inativas removidas automaticamente após 24 horas.
@@ -22,7 +23,8 @@ Site responsivo para criar salas e assistir a vídeos do YouTube em sincronia no
 
 - **Interface:** React, TypeScript, Vinext/Vite e Tailwind CSS.
 - **Player:** YouTube IFrame Player API.
-- **GitHub Pages:** hospeda a versão estática acessada pelos usuários.
+- **GitHub Pages:** hospeda a interface estática acessada pelos usuários.
+- **Salas no Pages:** conexão direta entre os navegadores, sem servidor próprio.
 - **API:** Cloudflare Worker.
 - **Banco:** D1/SQLite para salas, participantes e estado de reprodução.
 - **Sincronização:** consultas leves ao estado da sala e correção local do player.
@@ -40,10 +42,10 @@ npx tsc --noEmit
 npm run build
 ```
 
-Para gerar a versão estática do GitHub Pages, informe o endereço da API da sua implantação:
+Para gerar a versão estática do GitHub Pages:
 
 ```bash
-VITE_WATCH_API_BASE=https://api.seu-dominio.com npm run build:pages
+npm run build:pages
 ```
 
 O resultado é gravado em `pages-dist/`. Cada envio para a branch `main` executa automaticamente lint, checagem de tipos, testes e as duas builds do projeto.
@@ -60,4 +62,5 @@ O resultado é gravado em `pages-dist/`. Cada envio para a branch `main` executa
 
 - anúncios do YouTube podem aparecer em momentos diferentes nos dois aparelhos;
 - o primeiro início de reprodução pode exigir um toque em cada aparelho;
+- no GitHub Pages, a sala encerra quando o criador fecha a página;
 - qualquer pessoa que descobrir o código ativo consegue entrar na sala.
