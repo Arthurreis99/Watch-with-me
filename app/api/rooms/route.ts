@@ -13,6 +13,14 @@ type RoomRow = {
   updated_at: number;
 };
 
+type MessageRow = {
+  id: string;
+  participant_id: string;
+  sender_name: string;
+  body: string;
+  created_at: number;
+};
+
 function randomCode() {
   const data = new Uint16Array(1);
   crypto.getRandomValues(data);
@@ -41,6 +49,34 @@ function publicRoom(room: RoomRow) {
     createdAt: room.created_at,
     updatedAt: room.updated_at,
   };
+}
+
+function publicMessage(message: MessageRow) {
+  return {
+    id: message.id,
+    participantId: message.participant_id,
+    senderName: message.sender_name,
+    body: message.body,
+    createdAt: message.created_at,
+  };
+}
+
+async function recentMessages(code: string) {
+  const rows = await getD1()
+    .prepare(
+      `SELECT id, participant_id, sender_name, body, created_at
+       FROM (
+         SELECT id, participant_id, sender_name, body, created_at
+         FROM messages
+         WHERE room_code = ?
+         ORDER BY created_at DESC
+         LIMIT 100
+       )
+       ORDER BY created_at ASC`,
+    )
+    .bind(code)
+    .all<MessageRow>();
+  return rows.results.map(publicMessage);
 }
 
 export async function OPTIONS() {
@@ -119,11 +155,14 @@ export async function POST(request: Request) {
 
     room ??= await db.prepare("SELECT * FROM rooms WHERE code = ?").bind(code).first<RoomRow>();
 
+    const messages = action === "join" ? await recentMessages(code) : [];
+
     return json(
       {
         participantId,
         room: publicRoom(room as RoomRow),
         participants: [{ id: participantId, name }],
+        messages,
         serverTime: now,
       },
       { status: action === "create" ? 201 : 200 },

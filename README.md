@@ -13,6 +13,8 @@ Site responsivo para criar salas e assistir a vídeos do YouTube em sincronia no
 - criação de sala com código numérico aleatório de quatro dígitos;
 - entrada em sala existente;
 - presença dos participantes conectados;
+- chat persistente durante a vida da sala;
+- link de convite que já preenche o código da sala;
 - adição de vídeo por link do YouTube;
 - sincronização de reprodução, pausa e mudança de posição;
 - correção automática de diferenças de tempo entre os aparelhos;
@@ -53,7 +55,7 @@ O resultado é gravado em `pages-dist/`. Cada envio para a branch `main` executa
 
 ## Estrutura principal
 
-- `components/watch-with-me.tsx`: entrada, sala e integração com o YouTube.
+- `components/watch-with-me.tsx`: entrada, sala, chat e integração com o YouTube.
 - `app/api/rooms/`: criação, entrada e sincronização das salas.
 - `db/schema.ts`: tabelas de salas e participantes.
 - `pages/`: entrada estática usada pelo GitHub Pages.

@@ -1,5 +1,6 @@
 import { getD1 } from "@/db/raw";
 import {
+  cleanMessage,
   json,
   options,
   safePosition,
@@ -22,6 +23,14 @@ type RoomRow = {
 
 type ParticipantRow = { id: string; name: string };
 
+type MessageRow = {
+  id: string;
+  participant_id: string;
+  sender_name: string;
+  body: string;
+  created_at: number;
+};
+
 function publicRoom(room: RoomRow) {
   return {
     code: room.code,
@@ -31,6 +40,16 @@ function publicRoom(room: RoomRow) {
     version: room.version,
     createdAt: room.created_at,
     updatedAt: room.updated_at,
+  };
+}
+
+function publicMessage(message: MessageRow) {
+  return {
+    id: message.id,
+    participantId: message.participant_id,
+    senderName: message.sender_name,
+    body: message.body,
+    createdAt: message.created_at,
   };
 }
 
@@ -67,9 +86,25 @@ export async function GET(
       .bind(code, activeSince)
       .all<ParticipantRow>();
 
+    const messageRows = await db
+      .prepare(
+        `SELECT id, participant_id, sender_name, body, created_at
+         FROM (
+           SELECT id, participant_id, sender_name, body, created_at
+           FROM messages
+           WHERE room_code = ?
+           ORDER BY created_at DESC
+           LIMIT 100
+         )
+         ORDER BY created_at ASC`,
+      )
+      .bind(code)
+      .all<MessageRow>();
+
     return json({
       room: publicRoom(room),
       participants: participantRows.results,
+      messages: messageRows.results.map(publicMessage),
       serverTime: Date.now(),
     });
   } catch (error) {
@@ -122,6 +157,48 @@ export async function POST(
         .bind(payload.participantId, code)
         .run();
       return json({ ok: true });
+    }
+
+    if (payload.action === "message") {
+      const body = cleanMessage((payload as { body?: unknown }).body);
+      if (!body) {
+        return json({ error: "Escreva uma mensagem antes de enviar." }, { status: 400 });
+      }
+
+      const sender = await db
+        .prepare("SELECT name FROM participants WHERE id = ? AND room_code = ?")
+        .bind(payload.participantId, code)
+        .first<{ name: string }>();
+      if (!sender) {
+        return json({ error: "Você não participa mais desta sala." }, { status: 401 });
+      }
+
+      const message: MessageRow = {
+        id: crypto.randomUUID(),
+        participant_id: payload.participantId,
+        sender_name: sender.name,
+        body,
+        created_at: now,
+      };
+      const insertMessage = db
+        .prepare(
+          `INSERT INTO messages
+             (id, room_code, participant_id, sender_name, body, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          message.id,
+          code,
+          message.participant_id,
+          message.sender_name,
+          message.body,
+          message.created_at,
+        );
+      const touchRoom = db
+        .prepare("UPDATE rooms SET last_activity = ? WHERE code = ?")
+        .bind(now, code);
+      await db.batch([insertMessage, touchRoom]);
+      return json({ message: publicMessage(message), serverTime: now }, { status: 201 });
     }
 
     if (payload.action !== "state" || !validVideoId(payload.videoId)) {

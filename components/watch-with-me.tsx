@@ -8,9 +8,12 @@ import {
   Link2,
   LoaderCircle,
   LogIn,
+  MessageCircle,
   Play,
   Plus,
   Radio,
+  Send,
+  Share2,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -27,6 +30,7 @@ import {
   Room,
   RoomSession,
   RoomSnapshot,
+  sendChatMessage,
   updateRoomState,
 } from "@/lib/room-api";
 
@@ -230,7 +234,10 @@ function WatchRoom({
   const [playerReady, setPlayerReady] = useState(false);
   const [playerUnlocked, setPlayerUnlocked] = useState(false);
   const [savingVideo, setSavingVideo] = useState(false);
+  const [messageText, setMessageText] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
   const playerHostRef = useRef<HTMLDivElement>(null);
+  const messageEndRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const snapshotRef = useRef(snapshot);
   const suppressEventsUntilRef = useRef(0);
@@ -241,6 +248,11 @@ function WatchRoom({
     snapshotRef.current = snapshot;
     snapshotReceivedAtRef.current = Date.now();
   }, [snapshot]);
+
+  const newestMessageId = snapshot.messages.at(-1)?.id;
+  useEffect(() => {
+    messageEndRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [newestMessageId]);
 
   const publishState = useCallback(
     async (state: Pick<Room, "videoId" | "playing" | "position">) => {
@@ -409,6 +421,35 @@ function WatchRoom({
     toast.success("Código copiado.");
   };
 
+  const copyInvite = async () => {
+    const invite = new URL(window.location.href);
+    invite.searchParams.set("room", session.code);
+    await navigator.clipboard.writeText(invite.toString());
+    toast.success("Link de convite copiado.");
+  };
+
+  const sendMessage = async (event: FormEvent) => {
+    event.preventDefault();
+    const body = messageText.trim();
+    if (!body || sendingMessage) return;
+
+    setSendingMessage(true);
+    try {
+      const result = await sendChatMessage(session, body);
+      setSnapshot((current) => ({
+        ...current,
+        messages: current.messages.some((message) => message.id === result.message.id)
+          ? current.messages
+          : [...current.messages, result.message].slice(-100),
+      }));
+      setMessageText("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível enviar.");
+    } finally {
+      setSendingMessage(false);
+    }
+  };
+
   const exit = async () => {
     try {
       await leaveRoom(session);
@@ -472,28 +513,74 @@ function WatchRoom({
           </div>
         </section>
 
-        <aside className="people-panel">
-          <div className="people-title">
+        <aside className="side-panel">
+          <section className="people-panel">
+            <div className="people-title">
             <span><Users /></span>
             <div><h2>Na sala</h2><p>{snapshot.participants.length} conectado{snapshot.participants.length === 1 ? "" : "s"}</p></div>
-          </div>
-          <div className="people-list">
-            {snapshot.participants.map((participant) => (
-              <div className="person-row" key={participant.id}>
-                <span className="avatar">{participant.name.slice(0, 1).toUpperCase()}</span>
-                <span>{participant.name}</span>
-                {participant.id === session.participantId && <small>você</small>}
-                <i aria-label="Online" />
-              </div>
-            ))}
-          </div>
-          <div className="room-code-card">
-            <p>Código da sala</p>
-            <strong>{session.code}</strong>
-            <Button variant="secondary" onClick={() => void copyCode()}>
-              <Copy /> Copiar código
-            </Button>
-          </div>
+            </div>
+            <div className="people-list">
+              {snapshot.participants.map((participant) => (
+                <div className="person-row" key={participant.id}>
+                  <span className="avatar">{participant.name.slice(0, 1).toUpperCase()}</span>
+                  <span>{participant.name}</span>
+                  {participant.id === session.participantId && <small>você</small>}
+                  <i aria-label="Online" />
+                </div>
+              ))}
+            </div>
+            <div className="invite-actions">
+              <Button variant="secondary" onClick={() => void copyCode()}>
+                <Copy /> Código {session.code}
+              </Button>
+              <Button variant="outline" onClick={() => void copyInvite()} aria-label="Copiar link de convite">
+                <Share2 /> Link
+              </Button>
+            </div>
+          </section>
+
+          <section className="chat-panel" aria-labelledby="chat-title">
+            <div className="chat-title">
+              <span><MessageCircle /></span>
+              <div><h2 id="chat-title">Chat</h2><p>Converse enquanto assiste</p></div>
+            </div>
+            <div className="message-list" aria-live="polite">
+              {snapshot.messages.length === 0 ? (
+                <div className="chat-empty">
+                  <MessageCircle />
+                  <p>Nenhuma mensagem ainda.</p>
+                </div>
+              ) : (
+                snapshot.messages.map((message) => {
+                  const own = message.participantId === session.participantId;
+                  return (
+                    <article className={`chat-message${own ? " chat-message-own" : ""}`} key={message.id}>
+                      <div>
+                        <strong>{own ? "Você" : message.senderName}</strong>
+                        <time dateTime={new Date(message.createdAt).toISOString()}>
+                          {new Date(message.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                        </time>
+                      </div>
+                      <p>{message.body}</p>
+                    </article>
+                  );
+                })
+              )}
+              <div ref={messageEndRef} />
+            </div>
+            <form className="chat-form" onSubmit={(event) => void sendMessage(event)}>
+              <Input
+                value={messageText}
+                onChange={(event) => setMessageText(event.target.value.slice(0, 360))}
+                placeholder="Escreva uma mensagem"
+                aria-label="Mensagem"
+                autoComplete="off"
+              />
+              <Button type="submit" size="icon" disabled={!messageText.trim() || sendingMessage} aria-label="Enviar mensagem">
+                {sendingMessage ? <LoaderCircle className="animate-spin" /> : <Send />}
+              </Button>
+            </form>
+          </section>
         </aside>
       </div>
     </main>
@@ -510,6 +597,8 @@ export default function WatchWithMe() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setName(window.localStorage.getItem("watch-with-me:name") ?? "");
+      const invitedRoom = new URLSearchParams(window.location.search).get("room");
+      if (invitedRoom && /^\d{4}$/.test(invitedRoom)) setCode(invitedRoom);
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -530,7 +619,15 @@ export default function WatchWithMe() {
       const result = await enterRoom(action, clean, action === "join" ? code : undefined);
       window.localStorage.setItem("watch-with-me:name", clean);
       setSession({ participantId: result.participantId, name: clean, code: result.room.code });
-      setSnapshot({ room: result.room, participants: result.participants, serverTime: result.serverTime });
+      setSnapshot({
+        room: result.room,
+        participants: result.participants,
+        messages: result.messages,
+        serverTime: result.serverTime,
+      });
+      const roomUrl = new URL(window.location.href);
+      roomUrl.searchParams.set("room", result.room.code);
+      window.history.replaceState(null, "", roomUrl);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Não foi possível entrar.");
     } finally {
@@ -548,6 +645,9 @@ export default function WatchWithMe() {
             setSession(null);
             setSnapshot(null);
             setCode("");
+            const cleanUrl = new URL(window.location.href);
+            cleanUrl.searchParams.delete("room");
+            window.history.replaceState(null, "", cleanUrl);
           }}
         />
       ) : (

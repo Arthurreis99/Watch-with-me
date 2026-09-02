@@ -10,9 +10,18 @@ export type Room = {
 
 export type Participant = { id: string; name: string };
 
+export type ChatMessage = {
+  id: string;
+  participantId: string;
+  senderName: string;
+  body: string;
+  createdAt: number;
+};
+
 export type RoomSnapshot = {
   room: Room;
   participants: Participant[];
+  messages: ChatMessage[];
   serverTime: number;
 };
 
@@ -39,14 +48,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export async function enterRoom(action: "create" | "join", name: string, code?: string) {
-  return request<RoomSnapshot & { participantId: string }>("/api/rooms", {
+  const result = await request<RoomSnapshot & { participantId: string }>("/api/rooms", {
     method: "POST",
     body: JSON.stringify({ action, name, code }),
   });
+  return { ...result, messages: result.messages ?? [] };
 }
 
-export function getRoom(code: string) {
-  return request<RoomSnapshot>(`/api/rooms/${code}`);
+export async function getRoom(code: string) {
+  const result = await request<RoomSnapshot>(`/api/rooms/${code}`);
+  return { ...result, messages: result.messages ?? [] };
 }
 
 export function heartbeat(session: RoomSession) {
@@ -75,4 +86,18 @@ export function updateRoomState(
       ...state,
     }),
   });
+}
+
+export function sendChatMessage(session: RoomSession, body: string) {
+  return request<{ message: ChatMessage; serverTime: number }>(
+    `/api/rooms/${session.code}`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        action: "message",
+        participantId: session.participantId,
+        body,
+      }),
+    },
+  );
 }

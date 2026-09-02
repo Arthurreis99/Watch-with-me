@@ -30,3 +30,18 @@ export const participants = sqliteTable(
     index("idx_participants_room_last_seen").on(table.roomCode, table.lastSeen),
   ],
 );
+
+export const messages = sqliteTable(
+  "messages",
+  {
+    id: text("id").primaryKey(),
+    roomCode: text("room_code")
+      .notNull()
+      .references(() => rooms.code, { onDelete: "cascade" }),
+    participantId: text("participant_id").notNull(),
+    senderName: text("sender_name").notNull(),
+    body: text("body").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [index("idx_messages_room_created_at").on(table.roomCode, table.createdAt)],
+);

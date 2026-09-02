@@ -18,6 +18,11 @@ export function cleanName(value: unknown) {
   return value.trim().replace(/\s+/g, " ").slice(0, 24);
 }
 
+export function cleanMessage(value: unknown) {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/\s+/g, " ").slice(0, 360);
+}
+
 export function validCode(value: unknown): value is string {
   return typeof value === "string" && /^\d{4}$/.test(value);
 }
