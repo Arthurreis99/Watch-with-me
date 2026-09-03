@@ -274,9 +274,10 @@ function WatchRoom({
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      const savedVolume = Number(window.localStorage.getItem("watch-with-me:volume"));
-      const initialVolume = Number.isFinite(savedVolume)
-        ? Math.max(0, Math.min(100, savedVolume))
+      const savedVolume = window.localStorage.getItem("watch-with-me:volume");
+      const parsedVolume = savedVolume === null ? 100 : Number(savedVolume);
+      const initialVolume = Number.isFinite(parsedVolume)
+        ? Math.max(0, Math.min(100, parsedVolume))
         : 100;
       volumeRef.current = initialVolume;
       setVolume(initialVolume);
