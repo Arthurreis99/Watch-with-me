@@ -168,8 +168,8 @@ button, input { font: inherit; }
 .room-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 20px; max-width: 1280px; margin: 28px auto 0; }
 .player-column { min-width: 0; }
 .player-frame { position: relative; overflow: hidden; width: 100%; aspect-ratio: 16/9; border: 1px solid rgba(255,255,255,.09); border-radius: 20px; background: #030304; box-shadow: 0 24px 70px rgba(0,0,0,.42); }
-.youtube-host, .youtube-host iframe { width: 100%; height: 100%; }
-.player-empty, .unlock-player, .player-error { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; border: 0; text-align: center; color: white; }
+.youtube-host, .youtube-player-mount, .youtube-host iframe { width: 100%; height: 100%; }
+.player-empty, .unlock-player, .player-error, .player-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; border: 0; text-align: center; color: white; }
 .player-empty { background: radial-gradient(circle at center, #171921, #07080a 72%); }
 .player-empty span, .unlock-player > span { display: grid; width: 58px; height: 58px; margin-bottom: 17px; place-items: center; border-radius: 50%; background: rgba(223,67,86,.14); color: #ed6373; }
 .player-empty span svg { width: 27px; }
@@ -186,6 +186,9 @@ button, input { font: inherit; }
 .player-error strong { font-size: 1.1rem; }
 .player-error p { max-width: 440px; margin: 8px 0 16px; color: #a6aab7; line-height: 1.5; }
 .player-error button { border-radius: 12px; }
+.player-loading { z-index: 1; gap: 10px; background: rgba(5,6,9,.94); color: #c9ccd5; }
+.player-loading svg { width: 25px; color: #ee6575; }
+.player-loading strong { font-size: .9rem; }
 .video-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin-top: 14px; }
 .video-input-wrap { position: relative; }
 .video-input-wrap > svg { position: absolute; z-index: 1; top: 50%; left: 14px; width: 17px; color: #7f8494; transform: translateY(-50%); }
@@ -200,15 +203,13 @@ button, input { font: inherit; }
 .sync-strip > small { margin-left: auto; color: #676c7b; }
 .sync-strip > button { height: 32px; padding-inline: 9px; color: #9ba0af; font-size: .75rem; }
 .sync-strip > button svg { width: 14px; }
-.volume-control { display: flex; align-items: center; gap: 7px; min-width: 170px; color: #aeb2c0; }
+.volume-control { display: flex; min-width: 190px; align-items: center; gap: 7px; color: #aeb2c0; }
+.volume-control label { display: flex; min-width: 80px; flex: 1; align-items: center; }
 .volume-control svg { width: 17px; height: 17px; flex: 0 0 auto; }
-.volume-control input { width: 100%; accent-color: var(--watch-red); cursor: pointer; }
+.volume-control input { width: 100%; min-height: 30px; accent-color: var(--watch-red); cursor: pointer; touch-action: pan-x; }
 .volume-control output { width: 34px; color: #7f8494; font-size: .72rem; text-align: right; }
-.mobile-volume-control { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-.mobile-volume-control button { height: 32px; padding-inline: 8px; color: #c2c5cf; font-size: .75rem; }
-.mobile-volume-control button svg { width: 15px; }
-.mobile-volume-control > span { display: flex; align-items: center; gap: 5px; color: #747988; font-size: .7rem; }
-.mobile-volume-control > span svg { width: 13px; }
+.volume-mute { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 8px; background: transparent; color: #c2c5cf; cursor: pointer; }
+.volume-mute:hover { background: rgba(255,255,255,.07); color: white; }
 
 .queue-panel { margin-top: 14px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 17px; background: rgba(17,19,26,.72); }
 .queue-heading { display: flex; min-height: 58px; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; border-bottom: 1px solid rgba(255,255,255,.07); }
@@ -331,9 +332,7 @@ button, input { font: inherit; }
   .video-form button { width: 100%; }
   .sync-strip { flex-wrap: wrap; }
   .sync-strip > small { display: none; }
-  .volume-control { min-width: 145px; margin-left: auto; }
-  .mobile-volume-control { width: 100%; justify-content: space-between; margin-left: 0; }
-  .mobile-volume-control > span { font-size: .68rem; }
+  .volume-control { width: 100%; min-width: 0; margin-left: 0; padding: 2px 4px; }
   .queue-list li { grid-template-columns: 26px minmax(0,1fr); }
   .queue-actions { grid-column: 2; justify-self: end; }
   .side-panel { grid-template-columns: 1fr; }

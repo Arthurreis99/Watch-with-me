@@ -1,8 +1,3 @@
-export function playerVolumeForUi(volume: number) {
-  const normalized = Math.max(0, Math.min(100, volume));
-  return Math.round((normalized / 100) ** 2 * 100);
-}
-
 export function extractYouTubeId(value: string) {
   const raw = value.trim();
   if (/^[\w-]{11}$/.test(raw)) return raw;

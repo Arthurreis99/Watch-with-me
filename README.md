@@ -21,13 +21,14 @@ O GitHub Pages usa conexão direta entre os aparelhos para manter sala, vídeo e
 - adição de vídeo por link do YouTube;
 - sincronização de reprodução, pausa e mudança de posição;
 - conexão direta entre os aparelhos na versão do GitHub Pages;
-- volume individual salvo em cada aparelho, com curva perceptível no computador;
-- controle móvel por mudo/som e pelos botões físicos do aparelho;
+- volume individual salvo em cada aparelho, com controle completo também no Android e iPhone;
+- curva perceptiva de volume, botão de mudo e restauração do último nível audível;
 - restauração automática da conexão ao voltar para o Chrome;
 - transferência automática do anfitrião quando ele sai e outra pessoa permanece;
 - estado visível de conexão e botão manual para reconectar;
 - fila compartilhada de vídeos, reordenação e reprodução automática do próximo;
 - botão para ressincronizar e mensagens específicas para erros do YouTube;
+- entrada tardia na posição atual do vídeo, após um único toque no novo aparelho;
 - opção para restringir os controles ao anfitrião;
 - bloqueio de novas entradas e convite protegido opcional;
 - versão instalável como aplicativo, com tentativa de manter a tela acordada;

@@ -29,7 +29,6 @@ import {
   Share2,
   ShieldCheck,
   SkipForward,
-  Smartphone,
   Trash2,
   Unlock,
   Users,
@@ -60,8 +59,12 @@ import {
   updateVideoQueue,
 } from "@/lib/room-api";
 import {
+  applyPlayerVolume,
+  syncYouTubePlayer,
+  type YouTubeVideoRequest,
+} from "@/lib/player-control";
+import {
   extractYouTubeId,
-  playerVolumeForUi,
   youtubeErrorMessage,
 } from "@/lib/watch-utils";
 
@@ -81,12 +84,13 @@ type YTEvent = { data: number; target: YTPlayer };
 type YTErrorEvent = { data: number; target: YTPlayer };
 
 type YTPlayer = {
-  cueVideoById(videoId: string): void;
+  cueVideoById(video: string | YouTubeVideoRequest): void;
   destroy(): void;
   getCurrentTime(): number;
   getPlayerState(): number;
   getVideoData(): { video_id?: string };
   getVolume(): number;
+  loadVideoById(video: string | YouTubeVideoRequest): void;
   mute(): void;
   pauseVideo(): void;
   playVideo(): void;
@@ -146,31 +150,48 @@ function loadYouTubeApi() {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   if (youtubeApiPromise) return youtubeApiPromise;
 
-  youtubeApiPromise = new Promise<YTNamespace>((resolve) => {
+  youtubeApiPromise = new Promise<YTNamespace>((resolve, reject) => {
+    let settled = false;
+    let scriptElement: HTMLScriptElement | null = null;
+    const finish = (YT: YTNamespace) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      resolve(YT);
+    };
+    const fail = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      if (!window.YT?.Player) scriptElement?.remove();
+      reject(new Error("Não foi possível carregar o player do YouTube."));
+    };
+    const timeout = window.setTimeout(fail, 15_000);
     const previousReady = window.onYouTubeIframeAPIReady;
     window.onYouTubeIframeAPIReady = () => {
       previousReady?.();
-      if (window.YT) resolve(window.YT);
+      if (window.YT) finish(window.YT);
     };
-    if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+    const existingScript = document.querySelector<HTMLScriptElement>(
+      'script[src="https://www.youtube.com/iframe_api"]',
+    );
+    if (existingScript) {
+      scriptElement = existingScript;
+      existingScript.addEventListener("error", fail, { once: true });
+    } else {
       const script = document.createElement("script");
+      scriptElement = script;
       script.src = "https://www.youtube.com/iframe_api";
       script.async = true;
+      script.addEventListener("error", fail, { once: true });
       document.head.appendChild(script);
     }
+  }).catch((error) => {
+    youtubeApiPromise = null;
+    throw error;
   });
 
   return youtubeApiPromise;
-}
-
-function targetPosition(room: Room, serverTime: number) {
-  if (!room.playing) return room.position;
-  return room.position + Math.max(0, serverTime - room.updatedAt) / 1000;
-}
-
-function isMobileAudioDevice() {
-  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-    window.matchMedia("(pointer: coarse)").matches;
 }
 
 function Landing({
@@ -301,7 +322,6 @@ function WatchRoom({
   const [sendingMessage, setSendingMessage] = useState(false);
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [volume, setVolume] = useState(100);
-  const [mobileAudio, setMobileAudio] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -310,6 +330,7 @@ function WatchRoom({
   const playerRef = useRef<YTPlayer | null>(null);
   const playerUnlockedRef = useRef(false);
   const volumeRef = useRef(100);
+  const lastAudibleVolumeRef = useRef(100);
   const snapshotRef = useRef(snapshot);
   const suppressEventsUntilRef = useRef(0);
   const lastSampleRef = useRef({ media: 0, wall: 0, state: -1 });
@@ -331,7 +352,7 @@ function WatchRoom({
 
   useEffect(() => {
     const refreshStoredSession = () => {
-      window.localStorage.setItem("watch-with-me:room-session", JSON.stringify({
+      window.sessionStorage.setItem("watch-with-me:room-session", JSON.stringify({
         role: isHost ? "create" : "join",
         name: session.name,
         code: session.code,
@@ -351,10 +372,9 @@ function WatchRoom({
       const initialVolume = Number.isFinite(parsedVolume)
         ? Math.max(0, Math.min(100, parsedVolume))
         : 100;
-      const mobile = isMobileAudioDevice();
       volumeRef.current = initialVolume;
+      if (initialVolume > 0) lastAudibleVolumeRef.current = initialVolume;
       setVolume(initialVolume);
-      setMobileAudio(mobile);
       setSoundEnabled(window.localStorage.getItem("watch-with-me:chat-sound") === "true");
     }, 0);
     return () => window.clearTimeout(timer);
@@ -460,22 +480,22 @@ function WatchRoom({
     publishStateRef.current = publishState;
   }, [publishState]);
 
-  const applyLocalVolume = useCallback((player: YTPlayer, nextVolume: number) => {
-    if (nextVolume === 0) {
-      player.mute();
-      return;
-    }
-    player.unMute();
-    if (!mobileAudio) player.setVolume(playerVolumeForUi(nextVolume));
-  }, [mobileAudio]);
-
   useEffect(() => {
     let cancelled = false;
     let player: YTPlayer | null = null;
+    const host = playerHostRef.current;
+    if (!host) return;
+
+    setPlayerReady(false);
+    playerRef.current = null;
+    host.replaceChildren();
+    const mount = document.createElement("div");
+    mount.className = "youtube-player-mount";
+    host.appendChild(mount);
 
     void loadYouTubeApi().then((YT) => {
-      if (cancelled || !playerHostRef.current) return;
-      player = new YT.Player(playerHostRef.current, {
+      if (cancelled || !mount.isConnected) return;
+      player = new YT.Player(mount, {
         playerVars: {
           playsinline: 1,
           rel: 0,
@@ -484,17 +504,19 @@ function WatchRoom({
         },
         events: {
           onReady: ({ target }) => {
+            if (cancelled) return;
             playerRef.current = target;
-            applyLocalVolume(target, volumeRef.current);
+            applyPlayerVolume(target, volumeRef.current);
             setPlayerReady(true);
             setPlayerError(null);
             const current = snapshotRef.current;
             if (current.room.videoId) {
               suppressEventsUntilRef.current = Date.now() + 1_200;
-              target.cueVideoById(current.room.videoId);
               const elapsed = Math.max(0, Date.now() - snapshotReceivedAtRef.current);
-              target.seekTo(targetPosition(current.room, current.serverTime + elapsed), true);
-              if (current.room.playing && playerUnlockedRef.current) target.playVideo();
+              syncYouTubePlayer(target, current.room, current.serverTime + elapsed, {
+                allowPlayback: playerUnlockedRef.current,
+                forceReload: true,
+              });
             }
           },
           onStateChange: ({ data, target }) => {
@@ -513,7 +535,9 @@ function WatchRoom({
             }
             if (Date.now() < suppressEventsUntilRef.current) return;
             if (target.getVideoData().video_id !== current.room.videoId) return;
-            if (data === YT.PlayerState.PLAYING || data === YT.PlayerState.PAUSED) {
+            const eventCanControl = current.room.controlMode !== "host" ||
+              current.room.hostParticipantId === session.participantId;
+            if (eventCanControl && (data === YT.PlayerState.PLAYING || data === YT.PlayerState.PAUSED)) {
               void publishStateRef.current({
                 videoId: current.room.videoId,
                 playing: data === YT.PlayerState.PLAYING,
@@ -522,24 +546,35 @@ function WatchRoom({
             }
           },
           onError: ({ data }) => {
+            if (cancelled) return;
             playerUnlockedRef.current = false;
             setPlayerUnlocked(false);
             setPlayerError(youtubeErrorMessage(data));
           },
           onAutoplayBlocked: () => {
+            if (cancelled) return;
             playerUnlockedRef.current = false;
             setPlayerUnlocked(false);
           },
         },
       });
+    }).catch((error) => {
+      if (cancelled) return;
+      setPlayerReady(false);
+      setPlayerError(error instanceof Error ? error.message : "Não foi possível carregar o player.");
     });
 
     return () => {
       cancelled = true;
-      player?.destroy();
+      try {
+        player?.destroy();
+      } catch {
+        // O contêiner será limpo logo abaixo mesmo se o player já tiver sido removido.
+      }
+      host.replaceChildren();
       playerRef.current = null;
     };
-  }, [applyLocalVolume, playerGeneration, session.participantId]);
+  }, [playerGeneration, session.participantId]);
 
   useEffect(() => {
     const player = playerRef.current;
@@ -547,12 +582,9 @@ function WatchRoom({
     if (!player || !playerReady || !room.videoId) return;
 
     suppressEventsUntilRef.current = Date.now() + 900;
-    const loadedVideo = player.getVideoData().video_id;
-    if (loadedVideo !== room.videoId) player.cueVideoById(room.videoId);
-    const target = targetPosition(room, serverTime);
-    if (Math.abs(player.getCurrentTime() - target) > 0.9) player.seekTo(target, true);
-    if (room.playing && playerUnlockedRef.current) player.playVideo();
-    else player.pauseVideo();
+    syncYouTubePlayer(player, room, serverTime, {
+      allowPlayback: playerUnlockedRef.current,
+    });
   }, [snapshot.room.version, playerReady]);
 
   useEffect(() => {
@@ -617,7 +649,11 @@ function WatchRoom({
         });
       } else if (state === YOUTUBE_STATE.PLAYING || state === YOUTUBE_STATE.PAUSED) {
         const elapsed = snapshotReceivedAtRef.current ? Math.max(0, wall - snapshotReceivedAtRef.current) : 0;
-        const remoteTarget = targetPosition(current.room, current.serverTime + elapsed);
+        const remoteTarget = current.room.position + (
+          current.room.playing
+            ? Math.max(0, current.serverTime + elapsed - current.room.updatedAt) / 1000
+            : 0
+        );
         if (Math.abs(media - remoteTarget) > 1.6) {
           suppressEventsUntilRef.current = wall + 700;
           player.seekTo(remoteTarget, true);
@@ -660,33 +696,50 @@ function WatchRoom({
     setPlayerError(null);
     suppressEventsUntilRef.current = Date.now() + 1_500;
     const elapsed = Math.max(0, Date.now() - snapshotReceivedAtRef.current);
-    const position = targetPosition(current.room, current.serverTime + elapsed);
-    if (Math.abs(player.getCurrentTime() - position) > 0.9) player.seekTo(position, true);
-    applyLocalVolume(player, volumeRef.current);
-    player.playVideo();
-    if (!current.room.playing && canControl) {
-      void publishStateRef.current({ videoId, playing: true, position });
+    const shouldStartRoom = !current.room.playing && canControl;
+    const desiredRoom = shouldStartRoom ? { ...current.room, playing: true } : current.room;
+    applyPlayerVolume(player, volumeRef.current);
+    const synced = syncYouTubePlayer(player, desiredRoom, current.serverTime + elapsed, {
+      allowPlayback: true,
+      forceReload: true,
+    });
+    if (shouldStartRoom) {
+      void publishStateRef.current({ videoId, playing: true, position: synced.target });
     }
   };
 
   const resyncPlayer = () => {
     setPlayerError(null);
-    setPlayerReady(false);
-    playerUnlockedRef.current = false;
-    setPlayerUnlocked(false);
-    setPlayerGeneration((current) => current + 1);
-    toast.success("Player recarregado com o estado da sala.");
+    const player = playerRef.current;
+    const current = snapshotRef.current;
+    if (!player || !playerReady || !current.room.videoId) {
+      setPlayerGeneration((generation) => generation + 1);
+      toast.info("Reabrindo o player…");
+      return;
+    }
+
+    const elapsed = Math.max(0, Date.now() - snapshotReceivedAtRef.current);
+    suppressEventsUntilRef.current = Date.now() + 1_500;
+    playerUnlockedRef.current = true;
+    setPlayerUnlocked(true);
+    applyPlayerVolume(player, volumeRef.current);
+    syncYouTubePlayer(player, current.room, current.serverTime + elapsed, {
+      allowPlayback: true,
+      forceReload: true,
+    });
+    toast.success("Vídeo alinhado ao estado atual da sala.");
   };
 
   const changeVolume = (nextVolume: number) => {
     const normalized = Math.max(0, Math.min(100, nextVolume));
+    if (normalized > 0) lastAudibleVolumeRef.current = normalized;
     volumeRef.current = normalized;
     setVolume(normalized);
     window.localStorage.setItem("watch-with-me:volume", String(normalized));
-    if (playerRef.current) applyLocalVolume(playerRef.current, normalized);
+    if (playerRef.current) applyPlayerVolume(playerRef.current, normalized);
   };
 
-  const toggleMobileMute = () => changeVolume(volume === 0 ? 100 : 0);
+  const toggleMute = () => changeVolume(volume === 0 ? lastAudibleVolumeRef.current : 0);
 
   const copyCode = async () => {
     await navigator.clipboard.writeText(session.code);
@@ -832,11 +885,17 @@ function WatchRoom({
                 <Button onClick={resyncPlayer}><RefreshCw /> Tentar novamente</Button>
               </div>
             )}
-            {snapshot.room.videoId && !playerError && !playerUnlocked && (
+            {snapshot.room.videoId && !playerError && !playerReady && (
+              <div className="player-loading" role="status">
+                <LoaderCircle className="animate-spin" />
+                <strong>Preparando o player…</strong>
+              </div>
+            )}
+            {snapshot.room.videoId && !playerError && playerReady && !playerUnlocked && (
               <button type="button" className="unlock-player" onClick={unlockPlayer}>
                 <span><Play /></span>
-                <strong>Iniciar vídeo</strong>
-                <small>Toque uma vez em cada aparelho</small>
+                <strong>{snapshot.room.playing ? "Entrar no vídeo" : canControl ? "Iniciar vídeo" : "Preparar vídeo"}</strong>
+                <small>{snapshot.room.playing ? "Toque para acompanhar de onde a sala está" : "Toque uma vez neste aparelho"}</small>
               </button>
             )}
           </div>
@@ -872,17 +931,11 @@ function WatchRoom({
             <Button variant="ghost" size="sm" onClick={resyncPlayer} disabled={!snapshot.room.videoId}>
               <RefreshCw /> Ressincronizar
             </Button>
-            {mobileAudio ? (
-              <div className="mobile-volume-control">
-                <Button variant="ghost" size="sm" onClick={toggleMobileMute}>
-                  {volume === 0 ? <VolumeX /> : <Volume2 />}
-                  {volume === 0 ? "Ativar som" : "Silenciar"}
-                </Button>
-                <span><Smartphone /> Volume pelos botões do aparelho</span>
-              </div>
-            ) : (
-              <label className="volume-control">
+            <div className="volume-control" role="group" aria-label="Volume deste aparelho">
+              <button type="button" className="volume-mute" onClick={toggleMute} aria-label={volume === 0 ? "Ativar som" : "Silenciar"}>
                 {volume === 0 ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}
+              </button>
+              <label>
                 <span className="sr-only">Volume deste aparelho</span>
                 <input
                   type="range"
@@ -893,9 +946,9 @@ function WatchRoom({
                   onChange={(event) => changeVolume(Number(event.target.value))}
                   aria-label="Volume deste aparelho"
                 />
-                <output>{volume}%</output>
               </label>
-            )}
+              <output>{volume}%</output>
+            </div>
           </div>
 
           <section className="queue-panel" aria-labelledby="queue-title">
@@ -1079,7 +1132,7 @@ export default function WatchWithMe() {
     const role = result.sessionRole ?? requestedRole;
     const inviteToken = result.inviteToken ?? result.room.inviteToken;
     window.localStorage.setItem("watch-with-me:name", cleanName);
-    window.localStorage.setItem("watch-with-me:room-session", JSON.stringify({
+    window.sessionStorage.setItem("watch-with-me:room-session", JSON.stringify({
       role,
       name: cleanName,
       code: result.room.code,
@@ -1111,7 +1164,7 @@ export default function WatchWithMe() {
       const invitedRoom = search.get("room");
       const invitedToken = search.get("token") ?? undefined;
       if (invitedRoom && /^\d{4}$/.test(invitedRoom)) setCode(invitedRoom);
-      const storedValue = window.localStorage.getItem("watch-with-me:room-session");
+      const storedValue = window.sessionStorage.getItem("watch-with-me:room-session");
       if (!storedValue || !invitedRoom) return;
 
       try {
@@ -1128,12 +1181,12 @@ export default function WatchWithMe() {
         void enterRoom(stored.role, stored.name, stored.code, token, true)
           .then((result) => establishSession(result, stored.name, stored.role))
           .catch(() => {
-            window.localStorage.removeItem("watch-with-me:room-session");
+            window.sessionStorage.removeItem("watch-with-me:room-session");
             toast.error("Não foi possível restaurar a sala. Entre novamente pelo código.");
           })
           .finally(() => setBusy(null));
       } catch {
-        window.localStorage.removeItem("watch-with-me:room-session");
+        window.sessionStorage.removeItem("watch-with-me:room-session");
       }
     }, 0);
     return () => window.clearTimeout(timer);
@@ -1171,7 +1224,7 @@ export default function WatchWithMe() {
           installAvailable={Boolean(installPrompt)}
           onInstall={() => void installApp()}
           onExit={() => {
-            window.localStorage.removeItem("watch-with-me:room-session");
+            window.sessionStorage.removeItem("watch-with-me:room-session");
             setSession(null);
             setSnapshot(null);
             setCode("");

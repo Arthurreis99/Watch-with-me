@@ -11,8 +11,13 @@ import {
 } from "../app/api/http.ts";
 import { hostElectionDelay, mergeMessages } from "../lib/p2p-room-api.ts";
 import {
-  extractYouTubeId,
+  applyPlayerVolume,
+  playbackTargetPosition,
   playerVolumeForUi,
+  syncYouTubePlayer,
+} from "../lib/player-control.ts";
+import {
+  extractYouTubeId,
   youtubeErrorMessage,
 } from "../lib/watch-utils.ts";
 
@@ -67,6 +72,67 @@ test("aplica uma curva de volume perceptível sem alterar os extremos", () => {
   assert.equal(playerVolumeForUi(20), 4);
   assert.equal(playerVolumeForUi(50), 25);
   assert.equal(playerVolumeForUi(100), 100);
+});
+
+test("aplica o volume local pelo player em qualquer tipo de aparelho", () => {
+  const calls = [];
+  const player = {
+    mute() { calls.push(["mute"]); },
+    setVolume(value) { calls.push(["volume", value]); },
+    unMute() { calls.push(["unmute"]); },
+  };
+
+  assert.equal(applyPlayerVolume(player, 50), 25);
+  assert.deepEqual(calls, [["unmute"], ["volume", 25]]);
+  calls.length = 0;
+  assert.equal(applyPlayerVolume(player, 0), 0);
+  assert.deepEqual(calls, [["mute"]]);
+});
+
+function fakePlayer(videoId = "") {
+  const calls = [];
+  return {
+    calls,
+    cueVideoById(video) { calls.push(["cue", video]); },
+    getCurrentTime() { return 12; },
+    getVideoData() { return { video_id: videoId }; },
+    loadVideoById(video) { calls.push(["load", video]); },
+    pauseVideo() { calls.push(["pause"]); },
+    playVideo() { calls.push(["play"]); },
+    seekTo(position) { calls.push(["seek", position]); },
+  };
+}
+
+test("calcula a posição atual para quem entra depois do início", () => {
+  const room = { playing: true, position: 20, updatedAt: 1_000 };
+  assert.equal(playbackTargetPosition(room, 6_500), 25.5);
+  assert.equal(playbackTargetPosition({ ...room, playing: false }, 6_500), 20);
+});
+
+test("entrada tardia prepara o vídeo sem violar o bloqueio de autoplay", () => {
+  const player = fakePlayer();
+  const result = syncYouTubePlayer(
+    player,
+    { videoId: "dQw4w9WgXcQ", playing: true, position: 20, updatedAt: 1_000 },
+    6_000,
+    { allowPlayback: false, forceReload: true },
+  );
+
+  assert.equal(result.action, "cue");
+  assert.deepEqual(player.calls, [["cue", { videoId: "dQw4w9WgXcQ", startSeconds: 25 }]]);
+});
+
+test("ressincronização iniciada pelo usuário recarrega e reproduz na posição correta", () => {
+  const player = fakePlayer("dQw4w9WgXcQ");
+  const result = syncYouTubePlayer(
+    player,
+    { videoId: "dQw4w9WgXcQ", playing: true, position: 30, updatedAt: 10_000 },
+    12_500,
+    { allowPlayback: true, forceReload: true },
+  );
+
+  assert.equal(result.action, "load");
+  assert.deepEqual(player.calls, [["load", { videoId: "dQw4w9WgXcQ", startSeconds: 32.5 }]]);
 });
 
 test("aceita os formatos comuns de link do YouTube", () => {
