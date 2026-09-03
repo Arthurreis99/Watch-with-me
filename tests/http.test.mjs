@@ -9,7 +9,12 @@ import {
   validParticipantId,
   validVideoId,
 } from "../app/api/http.ts";
-import { mergeMessages } from "../lib/p2p-room-api.ts";
+import { hostElectionDelay, mergeMessages } from "../lib/p2p-room-api.ts";
+import {
+  extractYouTubeId,
+  playerVolumeForUi,
+  youtubeErrorMessage,
+} from "../lib/watch-utils.ts";
 
 test("normaliza nomes e mensagens antes de persistir", () => {
   assert.equal(cleanName("  Ana   Maria  "), "Ana Maria");
@@ -55,4 +60,29 @@ test("preserva mensagens locais durante a reconexão sem duplicar o chat", () =>
     mergeMessages([confirmed], [confirmed, pending]).map((message) => message.id),
     ["mensagem-1", "mensagem-2"],
   );
+});
+
+test("aplica uma curva de volume perceptível sem alterar os extremos", () => {
+  assert.equal(playerVolumeForUi(0), 0);
+  assert.equal(playerVolumeForUi(20), 4);
+  assert.equal(playerVolumeForUi(50), 25);
+  assert.equal(playerVolumeForUi(100), 100);
+});
+
+test("aceita os formatos comuns de link do YouTube", () => {
+  assert.equal(extractYouTubeId("https://youtu.be/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(extractYouTubeId("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(extractYouTubeId("https://youtube.com/shorts/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(extractYouTubeId("não é um vídeo"), null);
+});
+
+test("explica os principais erros de incorporação do YouTube", () => {
+  assert.match(youtubeErrorMessage(100), /removido|privado/i);
+  assert.match(youtubeErrorMessage(150), /não permite/i);
+});
+
+test("escalona a eleição do novo anfitrião sem corrida entre participantes", () => {
+  const participants = ["host", "pessoa-b", "pessoa-a"];
+  assert.equal(hostElectionDelay(participants, "host", "pessoa-a"), 1_400);
+  assert.equal(hostElectionDelay(participants, "host", "pessoa-b"), 2_250);
 });

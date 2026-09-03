@@ -16,17 +16,26 @@ O GitHub Pages usa conexão direta entre os aparelhos para manter sala, vídeo e
 - criação de sala com código numérico aleatório de quatro dígitos;
 - entrada em sala existente;
 - presença dos participantes conectados;
-- chat persistente durante a vida da sala;
+- chat com respostas, reações rápidas, mensagens pendentes e aviso sonoro opcional;
 - link de convite que já preenche o código da sala;
 - adição de vídeo por link do YouTube;
 - sincronização de reprodução, pausa e mudança de posição;
 - conexão direta entre os aparelhos na versão do GitHub Pages;
-- volume individual salvo em cada aparelho;
+- volume individual salvo em cada aparelho, com curva perceptível no computador;
+- controle móvel por mudo/som e pelos botões físicos do aparelho;
 - restauração automática da conexão ao voltar para o Chrome;
+- transferência automática do anfitrião quando ele sai e outra pessoa permanece;
+- estado visível de conexão e botão manual para reconectar;
+- fila compartilhada de vídeos, reordenação e reprodução automática do próximo;
+- botão para ressincronizar e mensagens específicas para erros do YouTube;
+- opção para restringir os controles ao anfitrião;
+- bloqueio de novas entradas e convite protegido opcional;
+- versão instalável como aplicativo, com tentativa de manter a tela acordada;
+- histórico recente da sala armazenado somente no próprio aparelho;
 - chat sincronizado com entrega otimista e reenvio após reconexão;
 - correção automática de diferenças de tempo entre os aparelhos;
-- botão de ativação do player para cumprir as restrições de reprodução do iPhone;
-- sala mantida enquanto o aparelho que a criou permanecer conectado.
+- botão de ativação do player para cumprir as restrições de reprodução do celular;
+- sala mantida enquanto pelo menos um participante permanecer conectado.
 
 > O código de quatro dígitos é um filtro simples, não uma senha de segurança. Foi mantido assim porque o projeto foi pensado para grupos pequenos.
 
@@ -40,7 +49,7 @@ O GitHub Pages usa conexão direta entre os aparelhos para manter sala, vídeo e
 - **Banco:** D1/SQLite para salas, participantes e estado de reprodução.
 - **Sincronização:** consultas leves ao estado da sala e correção local do player.
 
-O vídeo continua sendo transmitido diretamente pelo YouTube. No GitHub Pages, mensagens, nomes e estado do player circulam diretamente entre os navegadores e não são armazenados pelo site.
+O vídeo continua sendo transmitido diretamente pelo YouTube. No GitHub Pages, mensagens, nomes, fila e estado do player circulam diretamente entre os navegadores. Um histórico recente é salvo somente no armazenamento local de cada aparelho para permitir reconexão e transferência do anfitrião.
 
 ## Desenvolvimento
 
@@ -73,5 +82,5 @@ O resultado é gravado em `pages-dist/`. Cada envio para a branch `main` executa
 
 - anúncios do YouTube podem aparecer em momentos diferentes nos dois aparelhos;
 - o primeiro início de reprodução pode exigir um toque em cada aparelho;
-- no GitHub Pages, a sala encerra quando o criador fecha a página;
-- qualquer pessoa que descobrir o código ativo consegue entrar na sala.
+- se todos os aparelhos forem fechados ao mesmo tempo, a sala deixa de existir;
+- salas sem o convite protegido ainda podem ser acessadas por quem descobrir o código ativo.
