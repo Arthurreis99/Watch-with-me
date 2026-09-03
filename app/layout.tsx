@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
-const pagesBasePath = process.env.GITHUB_PAGES === "true" ? "/Watch-with-me-" : "";
+const pagesBasePath = process.env.GITHUB_PAGES === "true" ? "/Watch-with-me" : "";
 
 export const metadata: Metadata = {
   title: "Watch With Me",

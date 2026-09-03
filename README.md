@@ -2,6 +2,14 @@
 
 Site responsivo para criar salas e assistir a vídeos do YouTube em sincronia no Android, iPhone ou computador.
 
+## Ver o site no navegador
+
+A versão mais recente é publicada automaticamente em:
+
+**https://arthurreis99.github.io/Watch-with-me/**
+
+O GitHub Pages usa conexão direta entre os aparelhos para manter sala, vídeo e chat sincronizados.
+
 ## O que já funciona
 
 - nome de usuário salvo apenas no aparelho;
@@ -13,9 +21,12 @@ Site responsivo para criar salas e assistir a vídeos do YouTube em sincronia no
 - adição de vídeo por link do YouTube;
 - sincronização de reprodução, pausa e mudança de posição;
 - conexão direta entre os aparelhos na versão do GitHub Pages;
+- volume individual salvo em cada aparelho;
+- restauração automática da conexão ao voltar para o Chrome;
+- chat sincronizado com entrega otimista e reenvio após reconexão;
 - correção automática de diferenças de tempo entre os aparelhos;
 - botão de ativação do player para cumprir as restrições de reprodução do iPhone;
-- salas inativas removidas automaticamente após 24 horas.
+- sala mantida enquanto o aparelho que a criou permanecer conectado.
 
 > O código de quatro dígitos é um filtro simples, não uma senha de segurança. Foi mantido assim porque o projeto foi pensado para grupos pequenos.
 
@@ -29,7 +40,7 @@ Site responsivo para criar salas e assistir a vídeos do YouTube em sincronia no
 - **Banco:** D1/SQLite para salas, participantes e estado de reprodução.
 - **Sincronização:** consultas leves ao estado da sala e correção local do player.
 
-O vídeo continua sendo transmitido diretamente pelo YouTube. O servidor guarda somente o código da sala, nomes temporários, vídeo selecionado e posição da reprodução.
+O vídeo continua sendo transmitido diretamente pelo YouTube. No GitHub Pages, mensagens, nomes e estado do player circulam diretamente entre os navegadores e não são armazenados pelo site.
 
 ## Desenvolvimento
 
@@ -48,7 +59,7 @@ Para gerar a versão estática do GitHub Pages:
 npm run build:pages
 ```
 
-O resultado é gravado em `pages-dist/`. Cada envio para a branch `main` executa automaticamente lint, checagem de tipos, testes e as duas builds do projeto.
+O resultado é gravado em `pages-dist/`. Cada envio para a branch `main` executa automaticamente lint, checagem de tipos, testes, build e publicação na branch `gh-pages`.
 
 ## Estrutura principal
 
@@ -56,7 +67,7 @@ O resultado é gravado em `pages-dist/`. Cada envio para a branch `main` executa
 - `app/api/rooms/`: criação, entrada e sincronização das salas.
 - `db/schema.ts`: tabelas de salas e participantes.
 - `pages/`: entrada estática usada pelo GitHub Pages.
-- `.github/workflows/deploy-pages.yml`: validação automática do projeto.
+- `.github/workflows/deploy-pages.yml`: validação e publicação automática do projeto.
 
 ## Limitações atuais
 

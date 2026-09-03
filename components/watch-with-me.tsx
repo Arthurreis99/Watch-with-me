@@ -15,6 +15,8 @@ import {
   Send,
   Share2,
   Users,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -34,6 +36,14 @@ import {
   updateRoomState,
 } from "@/lib/room-api";
 
+type EnterResult = Awaited<ReturnType<typeof enterRoom>>;
+type StoredRoomSession = {
+  role: "create" | "join";
+  name: string;
+  code: string;
+  savedAt: number;
+};
+
 type YTEvent = { data: number; target: YTPlayer };
 
 type YTPlayer = {
@@ -42,10 +52,12 @@ type YTPlayer = {
   getCurrentTime(): number;
   getPlayerState(): number;
   getVideoData(): { video_id?: string };
+  getVolume(): number;
   mute(): void;
   pauseVideo(): void;
   playVideo(): void;
   seekTo(seconds: number, allowSeekAhead: boolean): void;
+  setVolume(volume: number): void;
   unMute(): void;
 };
 
@@ -244,10 +256,12 @@ function WatchRoom({
   const [savingVideo, setSavingVideo] = useState(false);
   const [messageText, setMessageText] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [volume, setVolume] = useState(100);
   const playerHostRef = useRef<HTMLDivElement>(null);
   const messageEndRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const playerUnlockedRef = useRef(false);
+  const volumeRef = useRef(100);
   const snapshotRef = useRef(snapshot);
   const suppressEventsUntilRef = useRef(0);
   const lastSampleRef = useRef({ media: 0, wall: 0, state: -1 });
@@ -257,6 +271,23 @@ function WatchRoom({
     snapshotRef.current = snapshot;
     snapshotReceivedAtRef.current = Date.now();
   }, [snapshot]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const savedVolume = Number(window.localStorage.getItem("watch-with-me:volume"));
+      const initialVolume = Number.isFinite(savedVolume)
+        ? Math.max(0, Math.min(100, savedVolume))
+        : 100;
+      volumeRef.current = initialVolume;
+      setVolume(initialVolume);
+      const player = playerRef.current;
+      if (player) {
+        player.setVolume(initialVolume);
+        if (initialVolume === 0) player.mute();
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const newestMessageId = snapshot.messages.at(-1)?.id;
   useEffect(() => {
@@ -296,6 +327,8 @@ function WatchRoom({
         events: {
           onReady: ({ target }) => {
             playerRef.current = target;
+            target.setVolume(volumeRef.current);
+            if (volumeRef.current === 0) target.mute();
             setPlayerReady(true);
             const current = snapshotRef.current;
             if (current.room.videoId) {
@@ -451,11 +484,25 @@ function WatchRoom({
     if (Math.abs(player.getCurrentTime() - position) > 0.9) {
       player.seekTo(position, true);
     }
-    player.unMute();
+    player.setVolume(volumeRef.current);
+    if (volumeRef.current === 0) player.mute();
+    else player.unMute();
     player.playVideo();
     if (!current.room.playing) {
       void publishStateRef.current({ videoId, playing: true, position });
     }
+  };
+
+  const changeVolume = (nextVolume: number) => {
+    const normalized = Math.max(0, Math.min(100, nextVolume));
+    volumeRef.current = normalized;
+    setVolume(normalized);
+    window.localStorage.setItem("watch-with-me:volume", String(normalized));
+    const player = playerRef.current;
+    if (!player) return;
+    player.setVolume(normalized);
+    if (normalized === 0) player.mute();
+    else player.unMute();
   };
 
   const copyCode = async () => {
@@ -549,9 +596,25 @@ function WatchRoom({
           </form>
 
           <div className="sync-strip">
-            <span className="sync-dot" />
-            <span>Sincronização ativa</span>
+            <div className="sync-status">
+              <span className="sync-dot" />
+              <span>Sincronização ativa</span>
+            </div>
             <small>Play, pausa e avanço são compartilhados</small>
+            <label className="volume-control">
+              {volume === 0 ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}
+              <span className="sr-only">Volume deste aparelho</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={volume}
+                onChange={(event) => changeVolume(Number(event.target.value))}
+                aria-label="Volume deste aparelho"
+              />
+              <output>{volume}%</output>
+            </label>
           </div>
         </section>
 
@@ -635,15 +698,72 @@ export default function WatchWithMe() {
   const [busy, setBusy] = useState<"create" | "join" | null>(null);
   const [session, setSession] = useState<RoomSession | null>(null);
   const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
+  const restoreStartedRef = useRef(false);
+
+  const establishSession = useCallback((
+    result: EnterResult,
+    cleanName: string,
+    role: "create" | "join",
+  ) => {
+    window.localStorage.setItem("watch-with-me:name", cleanName);
+    window.localStorage.setItem("watch-with-me:room-session", JSON.stringify({
+      role,
+      name: cleanName,
+      code: result.room.code,
+      savedAt: Date.now(),
+    } satisfies StoredRoomSession));
+    setSession({
+      participantId: result.participantId,
+      name: cleanName,
+      code: result.room.code,
+    });
+    setSnapshot({
+      room: result.room,
+      participants: result.participants,
+      messages: result.messages,
+      serverTime: result.serverTime,
+    });
+    const roomUrl = new URL(window.location.href);
+    roomUrl.searchParams.set("room", result.room.code);
+    window.history.replaceState(null, "", roomUrl);
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setName(window.localStorage.getItem("watch-with-me:name") ?? "");
+      if (restoreStartedRef.current) return;
+      restoreStartedRef.current = true;
+      const savedName = window.localStorage.getItem("watch-with-me:name") ?? "";
+      setName(savedName);
       const invitedRoom = new URLSearchParams(window.location.search).get("room");
       if (invitedRoom && /^\d{4}$/.test(invitedRoom)) setCode(invitedRoom);
+      const storedValue = window.localStorage.getItem("watch-with-me:room-session");
+      if (!storedValue || !invitedRoom) return;
+
+      try {
+        const stored = JSON.parse(storedValue) as StoredRoomSession;
+        const stillRecent = Date.now() - stored.savedAt < 6 * 60 * 60 * 1000;
+        if (
+          !stillRecent ||
+          stored.code !== invitedRoom ||
+          !/^\d{4}$/.test(stored.code) ||
+          (stored.role !== "create" && stored.role !== "join")
+        ) return;
+
+        setName(stored.name);
+        setBusy(stored.role);
+        void enterRoom(stored.role, stored.name, stored.code)
+          .then((result) => establishSession(result, stored.name, stored.role))
+          .catch(() => {
+            window.localStorage.removeItem("watch-with-me:room-session");
+            toast.error("Não foi possível restaurar a sala. Entre novamente pelo código.");
+          })
+          .finally(() => setBusy(null));
+      } catch {
+        window.localStorage.removeItem("watch-with-me:room-session");
+      }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [establishSession]);
 
   const handleEnter = async (action: "create" | "join") => {
     const clean = name.trim().replace(/\s+/g, " ");
@@ -659,17 +779,7 @@ export default function WatchWithMe() {
     setBusy(action);
     try {
       const result = await enterRoom(action, clean, action === "join" ? code : undefined);
-      window.localStorage.setItem("watch-with-me:name", clean);
-      setSession({ participantId: result.participantId, name: clean, code: result.room.code });
-      setSnapshot({
-        room: result.room,
-        participants: result.participants,
-        messages: result.messages,
-        serverTime: result.serverTime,
-      });
-      const roomUrl = new URL(window.location.href);
-      roomUrl.searchParams.set("room", result.room.code);
-      window.history.replaceState(null, "", roomUrl);
+      establishSession(result, clean, action);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Não foi possível entrar.");
     } finally {
@@ -684,6 +794,7 @@ export default function WatchWithMe() {
           session={session}
           initialSnapshot={snapshot}
           onExit={() => {
+            window.localStorage.removeItem("watch-with-me:room-session");
             setSession(null);
             setSnapshot(null);
             setCode("");

@@ -9,6 +9,7 @@ import {
   validParticipantId,
   validVideoId,
 } from "../app/api/http.ts";
+import { mergeMessages } from "../lib/p2p-room-api.ts";
 
 test("normaliza nomes e mensagens antes de persistir", () => {
   assert.equal(cleanName("  Ana   Maria  "), "Ana Maria");
@@ -32,4 +33,26 @@ test("limita posições inválidas do player", () => {
   assert.equal(safePosition("12.5"), 12.5);
   assert.equal(safePosition(Number.NaN), 0);
   assert.equal(safePosition(999_999), 604_800);
+});
+
+test("preserva mensagens locais durante a reconexão sem duplicar o chat", () => {
+  const confirmed = {
+    id: "mensagem-1",
+    participantId: "participante-1",
+    senderName: "Ana",
+    body: "Oi",
+    createdAt: 10,
+  };
+  const pending = {
+    id: "mensagem-2",
+    participantId: "participante-2",
+    senderName: "Arthur",
+    body: "Olá",
+    createdAt: 20,
+  };
+
+  assert.deepEqual(
+    mergeMessages([confirmed], [confirmed, pending]).map((message) => message.id),
+    ["mensagem-1", "mensagem-2"],
+  );
 });

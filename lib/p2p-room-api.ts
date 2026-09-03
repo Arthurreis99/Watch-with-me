@@ -25,6 +25,11 @@ type PeerRoomContext = {
   connected: boolean;
   hostConnection?: DataConnection;
   guestConnections: Map<string, DataConnection>;
+  pendingMessages: ChatMessage[];
+  pendingState?: RoomState;
+  reconnectTimer?: number;
+  reconnecting: boolean;
+  cleanupLifecycle?: () => void;
 };
 
 const PEER_PREFIX = "watch-with-me-room-";
@@ -74,21 +79,116 @@ function openPeer(requestedId?: string): Promise<Peer> {
         reject(new Error("A conexão demorou demais. Tente novamente."));
       }, CONNECTION_TIMEOUT);
 
-      peer.once("open", () => {
+      const handleOpen = () => {
         window.clearTimeout(timer);
+        peer.off("error", handleError);
         resolve(peer);
-      });
-      peer.once("error", (error) => {
+      };
+      const handleError = (error: Error) => {
         window.clearTimeout(timer);
+        peer.off("open", handleOpen);
         peer.destroy();
         reject(error);
-      });
+      };
+
+      peer.once("open", handleOpen);
+      peer.once("error", handleError);
     }).catch(() => reject(new Error("Não foi possível iniciar a conexão da sala.")));
   });
 }
 
 function publicSnapshot(context: PeerRoomContext) {
   return cloneSnapshot({ ...context.snapshot, serverTime: Date.now() });
+}
+
+export function mergeMessages(primary: ChatMessage[], pending: ChatMessage[]) {
+  const messages = [...primary];
+  const ids = new Set(messages.map((message) => message.id));
+  for (const message of pending) {
+    if (!ids.has(message.id)) {
+      messages.push(message);
+      ids.add(message.id);
+    }
+  }
+  return messages.sort((a, b) => a.createdAt - b.createdAt).slice(-100);
+}
+
+function reconnectSignaling(peer: Peer) {
+  if (!peer.disconnected) return Promise.resolve();
+  if (peer.destroyed) return Promise.reject(new Error("A conexão foi encerrada."));
+
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      peer.off("open", handleOpen);
+      peer.off("error", handleError);
+      reject(new Error("Não foi possível restaurar a conexão."));
+    }, CONNECTION_TIMEOUT);
+    const handleOpen = () => {
+      window.clearTimeout(timer);
+      peer.off("error", handleError);
+      resolve();
+    };
+    const handleError = () => {
+      window.clearTimeout(timer);
+      peer.off("open", handleOpen);
+      reject(new Error("Não foi possível restaurar a conexão."));
+    };
+
+    peer.once("open", handleOpen);
+    peer.once("error", handleError);
+    try {
+      peer.reconnect();
+    } catch {
+      window.clearTimeout(timer);
+      peer.off("open", handleOpen);
+      peer.off("error", handleError);
+      reject(new Error("Não foi possível restaurar a conexão."));
+    }
+  });
+}
+
+function scheduleRecovery(context: PeerRoomContext, delay = 750) {
+  if (!context.connected || context.reconnectTimer !== undefined) return;
+  context.reconnectTimer = window.setTimeout(() => {
+    context.reconnectTimer = undefined;
+    void recoverConnection(context);
+  }, delay);
+}
+
+async function recoverConnection(context: PeerRoomContext) {
+  if (!context.connected || context.reconnecting || context.peer.destroyed) return;
+  context.reconnecting = true;
+  try {
+    await reconnectSignaling(context.peer);
+    if (
+      context.role === "guest" &&
+      (!context.hostConnection || !context.hostConnection.open)
+    ) {
+      await connectGuestConnection(context);
+    }
+  } catch {
+    scheduleRecovery(context, 2_000);
+  } finally {
+    context.reconnecting = false;
+  }
+}
+
+function registerLifecycleRecovery(context: PeerRoomContext) {
+  const recover = () => {
+    if (document.visibilityState === "visible" && navigator.onLine) {
+      scheduleRecovery(context, 0);
+    }
+  };
+  document.addEventListener("visibilitychange", recover);
+  window.addEventListener("focus", recover);
+  window.addEventListener("online", recover);
+  window.addEventListener("pageshow", recover);
+  context.cleanupLifecycle = () => {
+    document.removeEventListener("visibilitychange", recover);
+    window.removeEventListener("focus", recover);
+    window.removeEventListener("online", recover);
+    window.removeEventListener("pageshow", recover);
+  };
 }
 
 function broadcastSnapshot(context: PeerRoomContext) {
@@ -112,7 +212,12 @@ function applyRoomState(context: PeerRoomContext, state: RoomState) {
   };
 }
 
-function removeGuest(context: PeerRoomContext, participantId: string) {
+function removeGuest(
+  context: PeerRoomContext,
+  participantId: string,
+  connection: DataConnection,
+) {
+  if (context.guestConnections.get(participantId) !== connection) return;
   if (!context.guestConnections.delete(participantId)) return;
   context.snapshot = {
     ...context.snapshot,
@@ -178,12 +283,19 @@ function handleHostConnection(context: PeerRoomContext, connection: DataConnecti
         body,
         createdAt: Date.now(),
       };
-      context.snapshot = {
-        ...context.snapshot,
-        messages: [...context.snapshot.messages, chatMessage].slice(-100),
-        serverTime: Date.now(),
-      };
+      if (!context.snapshot.messages.some((item) => item.id === chatMessage.id)) {
+        context.snapshot = {
+          ...context.snapshot,
+          messages: [...context.snapshot.messages, chatMessage].slice(-100),
+          serverTime: Date.now(),
+        };
+      }
       broadcastSnapshot(context);
+      return;
+    }
+
+    if (message.type === "heartbeat") {
+      connection.send({ type: "snapshot", snapshot: publicSnapshot(context) });
       return;
     }
 
@@ -191,13 +303,14 @@ function handleHostConnection(context: PeerRoomContext, connection: DataConnecti
   });
 
   connection.on("close", () => {
-    if (joinedParticipantId) removeGuest(context, joinedParticipantId);
+    if (joinedParticipantId) removeGuest(context, joinedParticipantId, connection);
   });
 }
 
-async function createPeerRoom(name: string) {
+async function createPeerRoom(name: string, preferredCode?: string) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const code = randomCode();
+    const restoring = Boolean(preferredCode && /^\d{4}$/.test(preferredCode));
+    const code = restoring ? preferredCode as string : randomCode();
     try {
       const peer = await openPeer(peerIdFor(code));
       const now = Date.now();
@@ -212,6 +325,8 @@ async function createPeerRoom(name: string) {
         session,
         connected: true,
         guestConnections: new Map(),
+        pendingMessages: [],
+        reconnecting: false,
         snapshot: {
           room: {
             code,
@@ -228,17 +343,98 @@ async function createPeerRoom(name: string) {
         },
       };
       peer.on("connection", (connection) => handleHostConnection(context, connection));
-      peer.on("error", () => {
-        context.connected = false;
-      });
+      peer.on("disconnected", () => scheduleRecovery(context));
+      peer.on("error", () => scheduleRecovery(context));
+      registerLifecycleRecovery(context);
       currentRoom = context;
       return { ...publicSnapshot(context), participantId: session.participantId };
     } catch (error) {
       const type = (error as { type?: string }).type;
       if (type !== "unavailable-id") throw error;
+      if (restoring) {
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+      }
     }
   }
   throw new Error("Não foi possível reservar um código agora. Tente novamente.");
+}
+
+function connectGuestConnection(context: PeerRoomContext): Promise<RoomSnapshot> {
+  return new Promise((resolve, reject) => {
+    const connection = context.peer.connect(peerIdFor(context.session.code), {
+      reliable: true,
+      serialization: "json",
+    });
+    context.hostConnection = connection;
+    let receivedSnapshot = false;
+    const timer = window.setTimeout(() => {
+      if (receivedSnapshot) return;
+      connection.close();
+      reject(new Error("Sala não encontrada. Confirme o código e tente novamente."));
+    }, CONNECTION_TIMEOUT);
+
+    const loseConnection = () => {
+      if (context.hostConnection === connection) context.hostConnection = undefined;
+      if (!receivedSnapshot) {
+        window.clearTimeout(timer);
+        reject(new Error("Não foi possível entrar nessa sala."));
+      }
+      scheduleRecovery(context);
+    };
+
+    connection.on("open", () => {
+      const message: WireMessage = {
+        type: "join",
+        participantId: context.session.participantId,
+        name: context.session.name,
+      };
+      connection.send(message);
+    });
+
+    connection.on("data", (raw) => {
+      const message = raw as WireMessage;
+      if (message?.type !== "snapshot") return;
+
+      const normalized = normalizeIncomingSnapshot(message.snapshot);
+      const confirmedMessageIds = new Set(
+        normalized.messages.map((chatMessage) => chatMessage.id),
+      );
+      context.pendingMessages = context.pendingMessages.filter(
+        (chatMessage) => !confirmedMessageIds.has(chatMessage.id),
+      );
+      normalized.messages = mergeMessages(
+        normalized.messages,
+        context.pendingMessages,
+      );
+      context.snapshot = normalized;
+
+      if (!receivedSnapshot) {
+        receivedSnapshot = true;
+        window.clearTimeout(timer);
+        const pendingState = context.pendingState;
+        context.pendingState = undefined;
+        if (pendingState) {
+          applyRoomState(context, pendingState);
+          connection.send({
+            type: "state",
+            participantId: context.session.participantId,
+            state: pendingState,
+          });
+        }
+        for (const chatMessage of context.pendingMessages) {
+          connection.send({
+            type: "message",
+            participantId: context.session.participantId,
+            message: chatMessage,
+          });
+        }
+        resolve(publicSnapshot(context));
+      }
+    });
+
+    connection.on("close", loseConnection);
+    connection.on("error", loseConnection);
+  });
 }
 
 async function joinPeerRoom(name: string, code: string) {
@@ -247,67 +443,45 @@ async function joinPeerRoom(name: string, code: string) {
   const peer = await openPeer();
   const participantId = crypto.randomUUID();
   const session: RoomSession = { participantId, name, code };
+  const now = Date.now();
+  const context: PeerRoomContext = {
+    role: "guest",
+    peer,
+    session,
+    connected: true,
+    guestConnections: new Map(),
+    pendingMessages: [],
+    reconnecting: false,
+    snapshot: {
+      room: {
+        code,
+        videoId: null,
+        playing: false,
+        position: 0,
+        version: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+      participants: [{ id: participantId, name }],
+      messages: [],
+      serverTime: now,
+    },
+  };
+  currentRoom = context;
+  peer.on("disconnected", () => scheduleRecovery(context));
+  peer.on("error", () => scheduleRecovery(context));
+  registerLifecycleRecovery(context);
 
-  return new Promise<RoomSnapshot & { participantId: string }>((resolve, reject) => {
-    const connection = peer.connect(peerIdFor(code), {
-      reliable: true,
-      serialization: "json",
-    });
-    let settled = false;
-    const timer = window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      connection.close();
-      peer.destroy();
-      reject(new Error("Sala não encontrada. Confirme o código e tente novamente."));
-    }, CONNECTION_TIMEOUT);
-
-    connection.on("open", () => {
-      const message: WireMessage = { type: "join", participantId, name };
-      connection.send(message);
-    });
-
-    connection.on("data", (raw) => {
-      const message = raw as WireMessage;
-      if (message?.type !== "snapshot") return;
-      const snapshot = normalizeIncomingSnapshot(message.snapshot);
-
-      if (!currentRoom) {
-        const context: PeerRoomContext = {
-          role: "guest",
-          peer,
-          session,
-          snapshot,
-          connected: true,
-          hostConnection: connection,
-          guestConnections: new Map(),
-        };
-        currentRoom = context;
-        peer.on("error", () => {
-          context.connected = false;
-        });
-        connection.on("close", () => {
-          context.connected = false;
-        });
-      } else if (currentRoom.role === "guest") {
-        currentRoom.snapshot = snapshot;
-      }
-
-      if (!settled) {
-        settled = true;
-        window.clearTimeout(timer);
-        resolve({ ...cloneSnapshot(snapshot), participantId });
-      }
-    });
-
-    connection.on("error", () => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      peer.destroy();
-      reject(new Error("Não foi possível entrar nessa sala."));
-    });
-  });
+  try {
+    const snapshot = await connectGuestConnection(context);
+    return { ...snapshot, participantId };
+  } catch (error) {
+    context.connected = false;
+    context.cleanupLifecycle?.();
+    peer.destroy();
+    currentRoom = null;
+    throw error;
+  }
 }
 
 function requireRoom(session: RoomSession) {
@@ -328,19 +502,30 @@ export async function enterPeerRoom(
   code?: string,
 ) {
   if (currentRoom) {
+    currentRoom.connected = false;
+    if (currentRoom.reconnectTimer !== undefined) {
+      window.clearTimeout(currentRoom.reconnectTimer);
+    }
+    currentRoom.cleanupLifecycle?.();
     currentRoom.peer.destroy();
     currentRoom = null;
   }
   const name = cleanName(rawName);
   if (!name) throw new Error("Digite seu nome para continuar.");
   return action === "create"
-    ? createPeerRoom(name)
+    ? createPeerRoom(name, code)
     : joinPeerRoom(name, code ?? "");
 }
 
 export async function getPeerRoom(code: string) {
   if (!currentRoom || !currentRoom.connected || currentRoom.session.code !== code) {
     throw new Error("O anfitrião encerrou a sala.");
+  }
+  if (
+    currentRoom.role === "guest" &&
+    (!currentRoom.hostConnection || !currentRoom.hostConnection.open)
+  ) {
+    scheduleRecovery(currentRoom, 0);
   }
   return publicSnapshot(currentRoom);
 }
@@ -352,19 +537,27 @@ export async function peerHeartbeat(session: RoomSession) {
       type: "heartbeat",
       participantId: session.participantId,
     };
-    context.hostConnection.send(message);
+    try {
+      context.hostConnection.send(message);
+    } catch {
+      scheduleRecovery(context, 0);
+    }
+  } else if (context.role === "guest") {
+    scheduleRecovery(context, 0);
   }
   return { ok: true as const, serverTime: Date.now() };
 }
 
 export async function leavePeerRoom(session: RoomSession) {
   const context = requireRoom(session);
+  context.connected = false;
+  if (context.reconnectTimer !== undefined) window.clearTimeout(context.reconnectTimer);
+  context.cleanupLifecycle?.();
   if (context.role === "guest" && context.hostConnection?.open) {
     const message: WireMessage = { type: "leave", participantId: session.participantId };
     context.hostConnection.send(message);
     context.hostConnection.close();
   }
-  context.connected = false;
   context.peer.destroy();
   currentRoom = null;
   return { ok: true as const };
@@ -382,7 +575,16 @@ export async function updatePeerRoomState(session: RoomSession, state: RoomState
       participantId: session.participantId,
       state,
     };
-    context.hostConnection.send(message);
+    try {
+      context.hostConnection.send(message);
+      context.pendingState = undefined;
+    } catch {
+      context.pendingState = state;
+      scheduleRecovery(context, 0);
+    }
+  } else {
+    context.pendingState = state;
+    scheduleRecovery(context, 0);
   }
 
   return { room: { ...context.snapshot.room }, serverTime: Date.now() };
@@ -408,13 +610,27 @@ export async function sendPeerChatMessage(session: RoomSession, rawBody: string)
       serverTime: Date.now(),
     };
     broadcastSnapshot(context);
-  } else if (context.hostConnection?.open) {
+  } else {
+    context.snapshot = {
+      ...context.snapshot,
+      messages: mergeMessages(context.snapshot.messages, [message]),
+      serverTime: Date.now(),
+    };
+    context.pendingMessages = mergeMessages(context.pendingMessages, [message]);
     const wireMessage: WireMessage = {
       type: "message",
       participantId: session.participantId,
       message,
     };
-    context.hostConnection.send(wireMessage);
+    if (context.hostConnection?.open) {
+      try {
+        context.hostConnection.send(wireMessage);
+      } catch {
+        scheduleRecovery(context, 0);
+      }
+    } else {
+      scheduleRecovery(context, 0);
+    }
   }
 
   return { message, serverTime: Date.now() };
